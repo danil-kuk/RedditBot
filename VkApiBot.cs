@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using VkNet;
 using VkNet.Enums.Filters;
@@ -20,6 +21,7 @@ namespace RedditBot
     {
         public VkApi Vk { get; private set; } = new VkApi();
         readonly string token;
+        public Dictionary<long, UserSession> AllUserSessions { get; set; } = new Dictionary<long, UserSession>();
         public ulong MyGroupId { get; private set; }
 
         /// <summary>
@@ -81,9 +83,29 @@ namespace RedditBot
                     if (update.Type == GroupUpdateType.MessageNew)
                     {
                         var userId = update.Message.FromId.Value;
+                        if (!AllUserSessions.ContainsKey(userId))
+                            AllUserSessions.Add(userId, new UserSession(userId, this));
+                        RegularMessageResponse(update.Message);
                     }
                 }
             }
+        }
+
+        private async void RegularMessageResponse(Message message)
+        {
+            var userId = message.FromId.Value;
+            var text = message.Text.ToLower();
+            var supportedSubs = new List<string> { "pics", "dankmemes", "memes" };
+            if (supportedSubs.Contains(text) &&
+                !AllUserSessions[userId].RedditBot.MonitoredSubs.Contains(text))
+            {
+                var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2)); //Отправлять посты в течении 2 минут
+                await AllUserSessions[userId].RedditBot.GetSubredditNewPostsAsync(text, cts.Token);
+            }
+            else if (AllUserSessions[userId].RedditBot.MonitoredSubs.Contains(text))
+                SendMessageToSelectedUser(userId, "Уже отслеживается");
+            else
+                SendMessageToSelectedUser(userId, "Неверная команда");
         }
 
         /// <summary>
@@ -141,12 +163,12 @@ namespace RedditBot
         /// <param name="userId">Id получателя</param>
         /// <param name="message">Сообщение</param>
         /// <param name="attachment">Вложения к сообщению</param>
-        public void SendMessageToSelectedUser(long userId, string message, 
+        public void SendMessageToSelectedUser(long userId, string message,
             ICollection<MediaAttachment> attachment = null)
         {
             var messageSendParams = new MessagesSendParams
             {
-                Attachments = attachment.Where(item => item != null),
+                Attachments = attachment?.Where(item => item != null),
                 UserId = userId,
                 Message = message,
                 RandomId = new Random().Next(999999)
